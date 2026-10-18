@@ -47,12 +47,13 @@ export function objectArt(kind,{pedestal=true,level=1}={}) {
     default: sprite=ellipse(0,-27,20,24,palette.gold);
   }
   if(!pedestal)return `<g>${sprite}</g>`;
-  const base=ellipse(0,3,35,12,'#294d4315')+path('M-27-1V-24L0-12V12Z','#b9a783','#9e8d6b')+path('M0-12L27-25V-1L0 12Z','#a79572','#9e8d6b')+path('M-29-26L0-40 29-26 0-12Z','#e9dabb','#cbb994')+path('M8 0L21-6V-1L8 5Z',level>1?'#c5a158':'#ece2c4');
+  const finishes=level>=3?['#325b50','#25483f','#d2b476','#b9914c']:level===2?['#6a9690','#527c76','#f0dfb7','#ae8d51']:['#b9a783','#a79572','#e9dabb','#9e8d6b'];
+  const base=ellipse(0,3,35,12,'#294d4315')+path('M-27-1V-24L0-12V12Z',finishes[0],finishes[3])+path('M0-12L27-25V-1L0 12Z',finishes[1],finishes[3])+path('M-29-26L0-40 29-26 0-12Z',finishes[2],finishes[3])+path('M8 0L21-6V-1L8 5Z',level>1?'#e4c574':'#ece2c4')+(level>=3?path('M-24-7L0 5 24-7M-24-21V-7M24-21V-7','none','#cfad66'):'');
   return base+`<g transform="translate(0 -19)">${sprite}</g>`;
 }
 
-export function thumbnail(art, className='') {
-  return `<svg class="object-thumbnail ${className}" viewBox="-50 -120 100 145" aria-hidden="true">${objectArt(art)}</svg>`;
+export function thumbnail(art, className='', level=1) {
+  return `<svg class="object-thumbnail ${className}" viewBox="-50 -120 100 145" aria-hidden="true">${objectArt(art,{level})}</svg>`;
 }
 
 export const iso=(x,y)=>({x:(x-y)*53,y:(x+y)*27});
@@ -113,7 +114,7 @@ export function renderBoard(s,{selected=null,placing=null,paths=false,preview=nu
     const pos=iso(p.x+.5,p.y+.5),item=s.collection.find(i=>i.id===p.id);
     const isSelected=selected===p.id;
     const name=BY_ID[p.id]?.name??DECOR[p.kind].name;
-    return `<g class="placed-object ${placing?.id===p.id?'moving-origin':''} ${isSelected?'selected-object':''}" data-object="${p.id}" data-action="select" data-id="${p.id}" data-depth="${p.x+p.y+1}" transform="translate(${pos.x} ${pos.y+6})" pointer-events="${placing?'none':'visiblePainted'}" role="button" tabindex="${placing?-1:0}" aria-label="${esc(name)}を選択"><rect x="-35" y="${p.kind==='bench'?-52:p.kind==='plant'?-82:-103}" width="70" height="${p.kind==='bench'?66:p.kind==='plant'?96:117}" fill="transparent"/>${isSelected?ellipse(0,1,39,19,'#e8c67770','stroke="#e9d7a4" stroke-width="2"'):''}${objectArt(p.kind??BY_ID[p.id].art,{level:item?.level})}${item?.level>1?`<g transform="translate(23 -68)"><circle r="9" fill="#315e4e"/><text text-anchor="middle" dominant-baseline="central" fill="#fff2ce" font-size="10">${item.level}</text></g>`:''}</g>`;
+    return `<g class="placed-object ${placing?.id===p.id?'moving-origin':''} ${isSelected?'selected-object':''}" data-object="${p.id}" data-action="select" data-id="${p.id}" data-depth="${p.x+p.y+1}" transform="translate(${pos.x} ${pos.y+6})" pointer-events="${placing?'none':'visiblePainted'}" role="button" tabindex="${placing?-1:0}" aria-label="${esc(name)}を選択"><rect x="-35" y="${p.kind==='bench'?-52:p.kind==='plant'?-82:-103}" width="70" height="${p.kind==='bench'?66:p.kind==='plant'?96:117}" fill="transparent" pointer-events="none"/>${isSelected?ellipse(0,1,39,19,'#e8c67770','stroke="#e9d7a4" stroke-width="2"'):''}${objectArt(p.kind??BY_ID[p.id].art,{level:item?.level})}${item?.level>1?`<g transform="translate(23 -68)"><circle r="9" fill="#315e4e"/><text text-anchor="middle" dominant-baseline="central" fill="#fff2ce" font-size="10">${item.level}</text></g>`:''}</g>`;
   }).join('');
   const entry=iso(door.x+.5,h);
   const viewBox=`${g.originX-h*53-55} ${g.originY-112} ${(w+h)*53+110} ${(w+h)*27+160}`;

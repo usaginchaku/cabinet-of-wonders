@@ -1682,6 +1682,11 @@ dialog::backdrop{
 .theme-goals summary span { font-size: 12px; color: var(--muted); }
 .goal-row { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 5px; padding: 8px 0; font-size: 12px; }
 .goal-row span { color: var(--muted); }
+.goal-row > small { flex-basis: 100%; color: var(--muted); }
+.investment-impact { display: block; color: var(--green); font-size: 12px; line-height: 1.6; margin-top: 3px; }
+.investment-impact > span { display: block; }
+.capacity-breakdown { display: flex; flex-wrap: wrap; gap: 4px 14px; color: var(--muted); font-size: 12px; margin: -5px 0 12px; }
+.grant-note { color: var(--green); font-size: 12px; margin: 8px 0; }
 .summary-feedback { border-top: 1px solid var(--line); padding-top: 12px; margin-top: 10px; }
 .summary-feedback details { font-size: 12px; margin-top: 6px; }
 .summary-feedback summary { min-height: 44px; cursor: pointer; display: flex; align-items: center; }

@@ -46,5 +46,6 @@ export const AUDIENCES = [
 ];
 export const PRICES = [20, 30, 45];
 export const DAY_SECONDS = 60;
-export const CURATOR = { costs: [900, 650, 1400], wages: [0, 60, 90, 140], experience: [0, 2, 5], benefits: ['開館中の調査・受入 +4人', '調査日数 −1日（最短1日）', '全展示の魅力 +15%'] };
+export const CURATOR = { costs: [900, 650, 1400], wages: [0, 60, 90, 140], capacity: [0, 4, 8, 12], experience: [0, 2, 5], benefits: ['開館中の調査・接客枠 +4人', '調査日数 −1日・接客枠 +4人', '全展示の魅力 +15%・接客枠 +4人'] };
+export const THEME_GRANT = 500;
 export const SAVE_KEY = 'curio-museum.save.v1';

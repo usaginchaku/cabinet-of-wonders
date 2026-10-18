@@ -60,7 +60,7 @@ const image=(p,name)=>p.screenshot({path:`artifacts/v02-${name}.png`,fullPage:tr
    await a(p2,'tab','collection').tap();await a(p2,'select','musicbox').tap();await a(p2,'place-select').tap();await a(p2,'place-list').tap();for(const width of [390,320]){await p2.setViewportSize({width,height:664});assert(await p2.locator('.modal-body').evaluate(el=>el.scrollWidth<=el.clientWidth+1));}
    await p2.locator('[data-modal-action="place-at"][data-x="7"][data-y="6"]').tap();await a(p2,'confirm-place').tap();assert((await read(p2)).placements.some(v=>v.id==='musicbox'&&v.x===7));
    assert(await p2.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));await image(p2,'webkit-320-expanded');
-   await a(p2,'help').tap();await p2.getByText('利益を増やすコツ',{exact:true}).tap();await p2.getByText('このゲームについて',{exact:true}).tap();await p2.getByText('奇妙な収集館 v0.2。',{exact:false}).scrollIntoViewIfNeeded();
+   await a(p2,'help').tap();await p2.getByText('利益を増やすコツ',{exact:true}).tap();await p2.getByText('このゲームについて',{exact:true}).tap();await p2.getByText('奇妙な収集館 v0.3。',{exact:false}).scrollIntoViewIfNeeded();
    await c2.close();
   });
  }finally{await w.close()}

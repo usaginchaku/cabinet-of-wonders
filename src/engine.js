@@ -1,4 +1,4 @@
-import { ARTIFACTS, BY_ID, ROUTES, FACILITIES, DECOR, AUDIENCES, PRICES, DAY_SECONDS, THEMES, CURATOR } from './data.js';
+import { ARTIFACTS, BY_ID, ROUTES, FACILITIES, DECOR, AUDIENCES, PRICES, DAY_SECONDS, THEMES, CURATOR, THEME_GRANT } from './data.js';
 
 export function initialState() {
   return {
@@ -63,6 +63,7 @@ export function collections(s) {
   });
 }
 export const expeditionDays=(s,route)=>Math.max(1,route.days-(s.curator.level>=2?1:0));
+export const expeditionCost=(s,route)=>Math.round(route.cost*(1+route.items.filter(id=>owned(s,id)).length*.5));
 
 export function forecast(s) {
   const guest=audience(s), exhibitPlacements=s.placements.filter(p=>BY_ID[p.id]);
@@ -81,23 +82,33 @@ export function forecast(s) {
   const plants=s.placements.filter(p=>p.kind==='plant').length;
   const benches=s.placements.filter(p=>p.kind==='bench').length;
   const comfort=Math.min(plants,4);
-  const sets=collections(s).filter(set=>set.complete).length;
+  const completeThemes=collections(s).filter(set=>set.complete),sets=completeThemes.length;
+  const newThemes=completeThemes.filter(set=>!s.milestones.includes(set.theme)).map(set=>set.theme);
   appeal=Math.round(appeal*(1+(s.facilities.lighting-1)*.12+(s.curator.level>=3?.15:0))+synergy*7+sets*12);
-  capacity+=benches*3+(s.curator.level?4:0);
+  const serviceCapacity=capacity+benches*3+CURATOR.capacity[s.curator.level];
+  const floorCapacity=accessibleTiles(s).size*3;
+  capacity=Math.min(serviceCapacity,floorCapacity);
   const priceIndex=PRICES.indexOf(s.ticket);
   // Reputation must affect repeat custom enough to make persistent overpricing costly.
   const demand=Math.round((7+appeal/7+matching*2+comfort)*(.5+s.reputation/20)*guest.price[priceIndex]);
   const visitors=exhibitPlacements.length ? Math.min(capacity,demand) : 0;
-  const satisfaction=Math.max(30,Math.min(98,76+comfort*3+synergy*2+matching*3+sets*3+(s.ticket===20?10:s.ticket===45?-20:0)-Math.max(0,demand-capacity)*2));
-  const income=visitors*s.ticket;
+  // Popularity should create pressure to expand without erasing the value of a good collection.
+  const crowdingPenalty=Math.min(24,Math.max(0,demand-capacity)*2);
+  const satisfaction=Math.max(30,Math.min(98,76+comfort*3+synergy*2+matching*3+sets*3+(s.ticket===20?10:s.ticket===45?-20:0)-crowdingPenalty));
+  const admissions=visitors*s.ticket;
+  // Quality still earns support when visitor numbers are limited by staff or space.
+  const donationPerVisitor=exhibitPlacements.length?appeal/exhibitPlacements.length*.4:0;
+  const donations=Math.round(visitors*donationPerVisitor);
+  const grant=newThemes.length*THEME_GRANT;
+  const income=admissions+donations+grant;
   const wages=CURATOR.wages[s.curator.level];
-  const upkeep=65+exhibitPlacements.length*8+(s.facilities.lighting-1)*15+(s.facilities.room-1)*20+wages;
-  return {visitors,capacity,demand,satisfaction,income,upkeep,wages,net:income-upkeep,appeal,synergy,matching,sets,audience:guest.name,theme:guest.theme};
+  const upkeep=65+exhibitPlacements.length*8+(s.facilities.lighting-1)*8+(s.facilities.room-1)*20+wages;
+  return {visitors,capacity,serviceCapacity,floorCapacity,demand,satisfaction,admissions,donations,grant,newThemes,income,upkeep,wages,net:income-upkeep,operatingNet:admissions+donations-upkeep,appeal,synergy,matching,sets,audience:guest.name,theme:guest.theme};
 }
 
 export function visitorFeedback(s) {
   const r=s.session?.report??forecast(s),feedback=[];
-  if(r.demand>r.capacity)feedback.push({text:'少し混んでいるね',detail:'受入人数を増やすと、混雑による満足度低下を抑えられます。'});
+  if(r.demand>r.capacity)feedback.push({text:r.floorCapacity<=r.serviceCapacity?'もう少し広いと見やすいね':'少し混んでいるね',detail:r.floorCapacity<=r.serviceCapacity?'通路の広さが受入人数の上限です。増築や配置の整理で、歩ける床を増やせます。':'接客枠が受入人数の上限です。回転重視の改良・ベンチ・調査担当の育成で増やせます。'});
   if(s.ticket===45&&r.satisfaction<85)feedback.push({text:'入館料、少し高いかな',detail:'45 Gの料金は満足度が20下がります。'});
   if(r.matching)feedback.push({text:`${THEMES[r.theme].name}の展示、好き！`,detail:'今日の客層に合う展示が集客と満足度を高めています。'});
   if(r.synergy)feedback.push({text:'この組み合わせ、いいね',detail:`同じテーマの隣接 ${r.synergy}組が魅力と満足度に加算されています。`});
@@ -108,8 +119,20 @@ export function visitorFeedback(s) {
 
 function requireThat(condition,message) { if(!condition) throw new Error(message); }
 function pay(s,amount) { requireThat(s.coins>=amount,`資金が ${Math.ceil(amount-s.coins).toLocaleString('ja-JP')} G 足りません。`); s.coins-=amount; }
-export const upgradeCost = item => 130*item.level + Math.round(BY_ID[item.id].appeal*2);
+export const upgradeCost = item => item.level===1 ? 130+Math.round(BY_ID[item.id].appeal*2) : 650+Math.round(BY_ID[item.id].appeal*12);
 export const routeNext = (s,route) => route.items.find(id=>!owned(s,id));
+
+/** Compare the same audience before spending; temporary funds never enter the save. */
+export function investmentPreview(s,type,args={}) {
+  if(s.session)return null;
+  const before=forecast(s);
+  try {
+    const candidate={...s,coins:1e12};
+    if(type==='curator')candidate.curator={...s.curator,experience:Math.max(s.curator.experience,CURATOR.experience[s.curator.level]??0)};
+    const next=command(candidate,type,args).state,after=forecast(next);
+    return {profit:after.operatingNet-before.operatingNet,capacity:after.capacity-before.capacity,satisfaction:after.satisfaction,satisfactionChange:after.satisfaction-before.satisfaction,grant:after.grant-before.grant};
+  }catch{return null;}
+}
 
 function updateTutorial(s) {
   const repaired=owned(s,'mask')?.status==='ready';
@@ -152,6 +175,11 @@ function settle(s, workshop=false) {
   s.stats.visitors+=report.visitors; s.stats.earnings+=report.income;
   if(!workshop) s.reputation=Math.max(0,Math.min(100,s.reputation+(report.satisfaction>=85?3:report.satisfaction>=65?1:-2)-(shortfall?2:0)));
   const completed=progressWork(s);
+  if(!workshop)for(const theme of report.newThemes??[]){
+    if(!s.milestones.includes(theme)){
+      s.milestones.push(theme);completed.push(`${THEMES[theme].name}の初公開 · 支援金 ${THEME_GRANT} G`);
+    }
+  }
   const feedback=workshop?[]:visitorFeedback(s);
   s.history.unshift({...report,feedback,net:report.income-paidUpkeep,day:s.day,shortfall,completed});
   s.history=s.history.slice(0,30); s.day++; s.session=null;
@@ -209,7 +237,7 @@ export function command(current,type,args={}) {
       const route=ROUTES.find(r=>r.id===args.id); requireThat(route,'調査先が見つかりません。');
       requireThat(!s.expedition,'調査隊は出発中です。'); const item=routeNext(s,route); requireThat(item,'この場所の調査は完了しています。');
       const days=expeditionDays(s,route);
-      pay(s,route.cost); s.expedition={route:route.id,item,remaining:days,total:days,progress:0,startedDay:s.day,startedElapsed:s.session?.elapsed??0}; message=`${route.name}へ出発しました。`; break;
+      pay(s,expeditionCost(s,route)); s.expedition={route:route.id,item,remaining:days,total:days,progress:0,startedDay:s.day,startedElapsed:s.session?.elapsed??0}; message=`${route.name}へ出発しました。`; break;
     }
     case 'curator': {
       const level=s.curator.level;requireThat(level<3,'最大まで育成済みです。');
@@ -250,6 +278,8 @@ export function validateSave(value) {
   try {
     requireThat(value&&[1,2].includes(value.version),'対応していないセーブ形式です。');
     const s=structuredClone(value);
+    s.milestones??=[];
+    requireThat(Array.isArray(s.milestones)&&s.milestones.length<=3&&new Set(s.milestones).size===s.milestones.length&&s.milestones.every(theme=>hasDefinition(THEMES,theme)),'初公開の記録が不正です。');
     if(s.version===1){
       s.curator={level:0,experience:Math.max(0,s.collection.length-4)};s.preferences.speed=1;
       if(s.session){s.session.elapsed=s.session.elapsed/18*DAY_SECONDS;s.session.paused=false;}
@@ -294,6 +324,7 @@ export function validateSave(value) {
     for(const report of s.history) {
       requireThat(['visitors','income','upkeep','satisfaction','day','shortfall'].every(k=>finiteInt(report[k],0,1e12))&&Number.isFinite(report.net)&&typeof report.audience==='string'&&report.audience.length<40&&Array.isArray(report.completed)&&report.completed.every(v=>typeof v==='string'&&v.length<100),'営業記録が不正です。');
       requireThat(report.feedback===undefined||Array.isArray(report.feedback)&&report.feedback.length<=5&&report.feedback.every(f=>typeof f.text==='string'&&f.text.length<80&&typeof f.detail==='string'&&f.detail.length<150),'感想の情報が不正です。');
+      requireThat(['admissions','donations','grant','serviceCapacity','floorCapacity'].every(k=>report[k]===undefined||finiteInt(report[k],0,1e12)),'営業記録の内訳が不正です。');
     }
     if(s.session) {
       requireThat(Number.isFinite(s.session.elapsed)&&s.session.elapsed>=0&&s.session.elapsed<DAY_SECONDS,'営業時間が不正です。');
@@ -301,7 +332,6 @@ export function validateSave(value) {
       // Derive financial results from validated game data, never trust imported revenue.
       s.session.report=forecast(s); requireThat(s.session.report.visitors>0,'営業できる展示がありません。');
     }
-    s.milestones=[];
     return {ok:true,state:s};
   } catch(error) { return {ok:false,error:error.message}; }
 }
