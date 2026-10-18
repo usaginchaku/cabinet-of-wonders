@@ -12,7 +12,7 @@ const action=(page,name,id)=>page.locator(`[data-action="${name}"]${id?`[data-id
 async function check(name,fn){await fn();results.push({name,status:'passed'});console.log(`PASS ${name}`);}
 async function stored(page){return page.evaluate(k=>JSON.parse(localStorage.getItem(k)),key);}
 async function closeSummary(page){await page.locator('[data-modal-action="close"]').last().click();}
-async function openAndFinish(page){await action(page,'open').click();await page.waitForTimeout(550);await action(page,'finish').click();await page.locator('#modal[open]').waitFor();await closeSummary(page);}
+async function openAndFinish(page){await action(page,'open').click();await page.waitForTimeout(550);await action(page,'finish').click();await page.locator('[data-modal-action="confirm"]').click();await page.getByRole('heading',{name:/営業記録$/}).waitFor();await closeSummary(page);}
 async function noOverflow(page){assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'Horizontal document overflow');}
 async function screenshot(page,name){await page.screenshot({path:path.join(out,`${name}.png`),fullPage:true});}
 
@@ -27,13 +27,13 @@ async function screenshot(page,name){await page.screenshot({path:path.join(out,`
    await action(page,'tab','collection').click();await action(page,'select','musicbox').click();await action(page,'place-select','musicbox').click();
    await page.locator('[data-tile-x="1"][data-tile-y="1"]').click();await page.getByText('ここにはすでに設備があります。',{exact:true}).waitFor();
    assert.equal((await stored(page)).placements.length,3);
-   await page.locator('[data-tile-x="2"][data-tile-y="1"]').click();assert((await stored(page)).placements.some(p=>p.id==='musicbox'));
+   await page.locator('[data-tile-x="2"][data-tile-y="1"]').click();await action(page,'confirm-place').click();assert((await stored(page)).placements.some(p=>p.id==='musicbox'));
    const before=(await stored(page)).coins;await openAndFinish(page);const after=await stored(page);assert(after.coins>before);assert.equal(after.day,2);
   });
   await check('desktop: repair, display, select upgrade branch and finish tutorial',async()=>{
    await action(page,'tab','workshop').click();await action(page,'repair','mask').click();await openAndFinish(page);
    await action(page,'tab','collection').click();await action(page,'select','mask').click();await action(page,'place-select','mask').click();
-   await page.locator('[data-tile-x="4"][data-tile-y="0"]').click();
+   await page.locator('[data-tile-x="4"][data-tile-y="0"]').click();await action(page,'confirm-place').click();
    await page.locator('[data-object="mask"]').click();
    await page.locator('[data-action="upgrade"][data-id="mask"][data-branch="quality"]').click();
    const s=await stored(page);assert.equal(s.tutorial,5);assert.equal(s.collection.find(i=>i.id==='mask').branch,'quality');
@@ -47,7 +47,7 @@ async function screenshot(page,name){await page.screenshot({path:path.join(out,`
   await check('desktop: an info dialog pauses an opening day',async()=>{
    await action(page,'open').click();await page.waitForTimeout(700);await action(page,'help').click();
    const before=await page.locator('#open-meta').textContent();await page.waitForTimeout(1200);const after=await page.locator('#open-meta').textContent();assert.equal(before,after);
-   await page.keyboard.press('Escape');await action(page,'finish').click();await closeSummary(page);
+   await page.keyboard.press('Escape');await action(page,'finish').click();await page.locator('[data-modal-action="confirm"]').click();await closeSummary(page);
   });
   await check('save: export/import roundtrip and invalid import leaves state intact',async()=>{
    await action(page,'help').click();await page.locator('[data-modal-action="info-tab"][data-id="settings"]').click();
@@ -75,17 +75,18 @@ async function screenshot(page,name){await page.screenshot({path:path.join(out,`
    await action(phone,'tab','collection').tap();await screenshot(phone,'mobile-collection');
    await action(phone,'select','musicbox').tap();await action(phone,'place-select','musicbox').tap();
    await action(phone,'place-list').tap();await phone.locator('[data-modal-action="place-at"][data-x="2"][data-y="1"]').tap();
+   await action(phone,'confirm-place').tap();
    assert((await stored(phone)).placements.some(p=>p.id==='musicbox'));
    await action(phone,'zoom').tap();await action(phone,'zoom').tap();
    await phone.locator('[data-object="plant-1"]').tap();await action(phone,'remove-decor').tap();
    await phone.locator('[data-modal-action="confirm"]').tap();assert(!(await stored(phone)).placements.some(p=>p.id==='plant-1'));
-   await action(phone,'close-panel').last().tap();
-   await action(phone,'open').tap();await phone.waitForTimeout(1000);await screenshot(phone,'mobile-open');await action(phone,'finish').tap();await closeSummary(phone);
+   await action(phone,'tab','museum').tap();
+   await action(phone,'open').tap();await phone.waitForTimeout(1000);await screenshot(phone,'mobile-open');await action(phone,'finish').tap();await phone.locator('[data-modal-action="confirm"]').tap();await closeSummary(phone);
   });
   await check('mobile: repair and later display, plus long help and editable name',async()=>{
    await action(phone,'tab','workshop').tap();await action(phone,'repair','mask').tap();await screenshot(phone,'mobile-workshop');await openAndFinish(phone);
    await action(phone,'tab','collection').tap();await action(phone,'select','mask').tap();await screenshot(phone,'mobile-detail');
-   await action(phone,'place-select','mask').tap();await action(phone,'place-list').tap();await phone.locator('[data-modal-action="place-at"][data-x="4"][data-y="0"]').tap();
+   await action(phone,'place-select','mask').tap();await action(phone,'place-list').tap();await phone.locator('[data-modal-action="place-at"][data-x="4"][data-y="0"]').tap();await action(phone,'confirm-place').tap();
    await action(phone,'help').tap();await phone.getByText('利益を増やすコツ',{exact:true}).tap();await screenshot(phone,'mobile-help');
    await phone.locator('[data-modal-action="info-tab"][data-id="settings"]').tap();await phone.locator('#museum-name').fill('月と星の収集館');await phone.getByRole('button',{name:'保存',exact:true}).tap();
    assert.equal((await stored(phone)).name,'月と星の収集館');await phone.keyboard.press('Escape');await phone.reload();assert.equal(await phone.locator('h1').textContent(),'月と星の収集館');await noOverflow(phone);
@@ -104,7 +105,7 @@ async function screenshot(page,name){await page.screenshot({path:path.join(out,`
   const engine=await import(pathToFileURL(path.join(root,'src/engine.js')));
   await check('later game: expanded room with a collection renders at desktop and mobile sizes',async()=>{
    let s=engine.initialState();s.coins=20000;
-   for(const id of ['room','room','lighting','lighting','workshop','workshop'])s=engine.command(s,'facility',{id}).state;
+   for(const id of ['room','room','room','lighting','lighting','workshop','workshop'])s=engine.command(s,'facility',{id}).state;
    for(const item of ARTIFACTSForScene())if(!s.collection.find(i=>i.id===item))s.collection.push({id:item,status:'ready',level:1,branch:null});
    s.collection.forEach(i=>i.status='ready');
    for(const [id,x,y] of [['musicbox',2,1],['mask',5,1],['ruby',5,2],['train',1,3],['tarot',3,3],['radio',4,3],['beetle',5,4],['orrery',1,4]])s=engine.command(s,'place',{id,x,y}).state;

@@ -1,8 +1,9 @@
-import { ARTIFACTS, BY_ID, ROUTES, FACILITIES, DECOR, AUDIENCES, PRICES, DAY_SECONDS } from './data.js';
+import { ARTIFACTS, BY_ID, ROUTES, FACILITIES, DECOR, AUDIENCES, PRICES, DAY_SECONDS, THEMES, CURATOR } from './data.js';
 
 export function initialState() {
   return {
-    version: 1, name: '奇妙な収集館', day: 1, coins: 1400, reputation: 10, ticket: 30,
+    version: 2, name: '奇妙な収集館', day: 1, coins: 1400, reputation: 10, ticket: 30,
+    curator: { level: 0, experience: 0 },
     facilities: { workshop: 1, lighting: 1, room: 1 },
     collection: [
       { id: 'clock', status: 'ready', level: 1, branch: null },
@@ -14,7 +15,7 @@ export function initialState() {
     expedition: null, session: null, history: [], nextDecor: 2,
     stats: { visitors: 0, earnings: 0, repairs: 0, upgrades: 0, placed: false },
     tutorial: 0, tutorialDismissed: false, milestones: [],
-    preferences: { sound: false, motion: true },
+    preferences: { sound: false, motion: true, speed: 1 },
   };
 }
 export const dimensions = s => ({ width: s.facilities.room + 4, height: s.facilities.room + 3 });
@@ -54,6 +55,15 @@ export function placementError(s, id, x, y) {
   return null;
 }
 
+export function collections(s) {
+  return Object.entries(THEMES).map(([theme,def])=>{
+    const items=s.placements.filter(p=>BY_ID[p.id]?.theme===theme).map(p=>owned(s,p.id));
+    const levels=items.reduce((sum,item)=>sum+item.level,0);
+    return {theme,name:def.name,count:items.length,levels,complete:items.length>=3&&levels>=6};
+  });
+}
+export const expeditionDays=(s,route)=>Math.max(1,route.days-(s.curator.level>=2?1:0));
+
 export function forecast(s) {
   const guest=audience(s), exhibitPlacements=s.placements.filter(p=>BY_ID[p.id]);
   let appeal=0, synergy=0, capacity=0, matching=0;
@@ -71,16 +81,29 @@ export function forecast(s) {
   const plants=s.placements.filter(p=>p.kind==='plant').length;
   const benches=s.placements.filter(p=>p.kind==='bench').length;
   const comfort=Math.min(plants,4);
-  appeal=Math.round(appeal*(1+(s.facilities.lighting-1)*.12)+synergy*7);
-  capacity+=benches*3;
+  const sets=collections(s).filter(set=>set.complete).length;
+  appeal=Math.round(appeal*(1+(s.facilities.lighting-1)*.12+(s.curator.level>=3?.15:0))+synergy*7+sets*12);
+  capacity+=benches*3+(s.curator.level?4:0);
   const priceIndex=PRICES.indexOf(s.ticket);
   // Reputation must affect repeat custom enough to make persistent overpricing costly.
   const demand=Math.round((7+appeal/7+matching*2+comfort)*(.5+s.reputation/20)*guest.price[priceIndex]);
   const visitors=exhibitPlacements.length ? Math.min(capacity,demand) : 0;
-  const satisfaction=Math.max(30,Math.min(98,76+comfort*3+synergy*2+matching*3+(s.ticket===20?10:s.ticket===45?-20:0)-Math.max(0,demand-capacity)*2));
+  const satisfaction=Math.max(30,Math.min(98,76+comfort*3+synergy*2+matching*3+sets*3+(s.ticket===20?10:s.ticket===45?-20:0)-Math.max(0,demand-capacity)*2));
   const income=visitors*s.ticket;
-  const upkeep=65+exhibitPlacements.length*8+(s.facilities.lighting-1)*15+(s.facilities.room-1)*20;
-  return {visitors,capacity,demand,satisfaction,income,upkeep,net:income-upkeep,appeal,synergy,matching,audience:guest.name,theme:guest.theme};
+  const wages=CURATOR.wages[s.curator.level];
+  const upkeep=65+exhibitPlacements.length*8+(s.facilities.lighting-1)*15+(s.facilities.room-1)*20+wages;
+  return {visitors,capacity,demand,satisfaction,income,upkeep,wages,net:income-upkeep,appeal,synergy,matching,sets,audience:guest.name,theme:guest.theme};
+}
+
+export function visitorFeedback(s) {
+  const r=s.session?.report??forecast(s),feedback=[];
+  if(r.demand>r.capacity)feedback.push({text:'少し混んでいるね',detail:'受入人数を増やすと、混雑による満足度低下を抑えられます。'});
+  if(s.ticket===45&&r.satisfaction<85)feedback.push({text:'入館料、少し高いかな',detail:'45 Gの料金は満足度が20下がります。'});
+  if(r.matching)feedback.push({text:`${THEMES[r.theme].name}の展示、好き！`,detail:'今日の客層に合う展示が集客と満足度を高めています。'});
+  if(r.synergy)feedback.push({text:'この組み合わせ、いいね',detail:`同じテーマの隣接 ${r.synergy}組が魅力と満足度に加算されています。`});
+  if(r.sets)feedback.push({text:'見ごたえのある特集だね',detail:`完成したテーマ展示 ${r.sets}組が魅力と満足度に加算されています。`});
+  if(!feedback.length)feedback.push({text:'次はどんな品が増えるかな',detail:'調査と修復で新しい展示を増やせます。'});
+  return feedback;
 }
 
 function requireThat(condition,message) { if(!condition) throw new Error(message); }
@@ -106,10 +129,14 @@ function progressWork(s) {
     }
   }
   if(s.expedition) {
-    s.expedition.remaining--;
+    const job=s.expedition;
+    // Late departures only receive the portion of the opening day actually worked.
+    job.progress+=(job.startedDay===s.day?1-job.startedElapsed/DAY_SECONDS:1);
+    const days=Math.floor(job.progress+1e-9);job.remaining-=days;job.progress=Math.max(0,job.progress-days);
     if(s.expedition.remaining<=0) {
       s.collection.push({id:s.expedition.item,status:'damaged',level:1,branch:null});
       completed.push(`${BY_ID[s.expedition.item].name}を発見`);
+      s.curator.experience++;
       s.expedition=null;
     }
   }
@@ -125,7 +152,8 @@ function settle(s, workshop=false) {
   s.stats.visitors+=report.visitors; s.stats.earnings+=report.income;
   if(!workshop) s.reputation=Math.max(0,Math.min(100,s.reputation+(report.satisfaction>=85?3:report.satisfaction>=65?1:-2)-(shortfall?2:0)));
   const completed=progressWork(s);
-  s.history.unshift({...report,net:report.income-paidUpkeep,day:s.day,shortfall,completed});
+  const feedback=workshop?[]:visitorFeedback(s);
+  s.history.unshift({...report,feedback,net:report.income-paidUpkeep,day:s.day,shortfall,completed});
   s.history=s.history.slice(0,30); s.day++; s.session=null;
   updateTutorial(s);
   return completed;
@@ -134,7 +162,9 @@ function settle(s, workshop=false) {
 /** Pure command boundary: failed commands never alter the caller's save. */
 export function command(current,type,args={}) {
   const s=structuredClone(current);
-  if(s.session && !['tick','finish','preferences','dismissTutorial','rename'].includes(type)) throw new Error('営業中です。閉館後に変更できます。');
+  const liveActions=['tick','finish','pause','preferences','dismissTutorial','rename'];
+  if(type==='expedition'&&s.curator.level>0)liveActions.push('expedition');
+  if(s.session && !liveActions.includes(type)) throw new Error(type==='expedition'?'調査担当を雇うと、開館中にも出発できます。':'営業中です。閉館後に変更できます。');
   let message='';
   switch(type) {
     case 'place': {
@@ -172,31 +202,40 @@ export function command(current,type,args={}) {
     }
     case 'facility': {
       requireThat(hasDefinition(FACILITIES,args.id),'設備が見つかりません。'); const def=FACILITIES[args.id];
-      const level=s.facilities[args.id]; requireThat(level<3,'最大まで改良済みです。');
+      const level=s.facilities[args.id]; requireThat(level<=def.costs.length,'最大まで改良済みです。');
       pay(s,def.costs[level-1]); s.facilities[args.id]++; s.stats.upgrades++; message=`${def.name}を改良しました。`; break;
     }
     case 'expedition': {
       const route=ROUTES.find(r=>r.id===args.id); requireThat(route,'調査先が見つかりません。');
       requireThat(!s.expedition,'調査隊は出発中です。'); const item=routeNext(s,route); requireThat(item,'この場所の調査は完了しています。');
-      pay(s,route.cost); s.expedition={route:route.id,item,remaining:route.days,total:route.days}; message=`${route.name}へ出発しました。`; break;
+      const days=expeditionDays(s,route);
+      pay(s,route.cost); s.expedition={route:route.id,item,remaining:days,total:days,progress:0,startedDay:s.day,startedElapsed:s.session?.elapsed??0}; message=`${route.name}へ出発しました。`; break;
+    }
+    case 'curator': {
+      const level=s.curator.level;requireThat(level<3,'最大まで育成済みです。');
+      requireThat(s.curator.experience>=CURATOR.experience[level],`育成には調査を${CURATOR.experience[level]}回完了してください。`);
+      pay(s,CURATOR.costs[level]);s.curator.level++;message=level?'調査担当が成長しました。':'調査担当を雇いました。';break;
     }
     case 'ticket': requireThat(PRICES.includes(args.value),'入館料を選んでください。'); s.ticket=args.value; break;
     case 'open': {
       const report=forecast(s); requireThat(report.visitors>0,'収蔵品を1つ以上展示してください。');
-      s.session={elapsed:0,report}; message='開館しました。'; break;
+      s.session={elapsed:0,report,paused:false}; message='開館しました。'; break;
     }
     case 'tick': {
       requireThat(s.session,'営業していません。'); requireThat(Number.isFinite(args.seconds)&&args.seconds>=0,'時間が不正です。');
+      if(s.session.paused)break;
       s.session.elapsed=Math.min(DAY_SECONDS,s.session.elapsed+Math.min(args.seconds,2));
       if(s.session.elapsed>=DAY_SECONDS) { settle(s); message='本日の営業が終わりました。'; }
       break;
     }
     case 'finish': requireThat(s.session,'営業していません。'); settle(s); message='本日の営業が終わりました。'; break;
+    case 'pause': requireThat(s.session,'営業していません。');s.session.paused=!s.session.paused;break;
     case 'work': settle(s,true); message='小仕事が完了。100 G を受け取りました。'; break;
     case 'dismissTutorial': s.tutorialDismissed=Boolean(args.value); break;
     case 'preferences':
       if(typeof args.motion==='boolean')s.preferences.motion=args.motion;
       if(typeof args.sound==='boolean')s.preferences.sound=args.sound;
+      if(args.speed!==undefined){requireThat([1,2,4].includes(args.speed),'速度が不正です。');s.preferences.speed=args.speed;}
       break;
     case 'rename': requireThat(typeof args.name==='string'&&args.name.trim().length>0&&args.name.trim().length<=20,'館の名前は1〜20文字にしてください。'); s.name=args.name.trim(); break;
     default: throw new Error('操作が見つかりません。');
@@ -209,12 +248,19 @@ const finiteInt=(n,min,max)=>Number.isInteger(n)&&n>=min&&n<=max;
 /** Validate saves before use, including map connectivity and in-flight jobs. */
 export function validateSave(value) {
   try {
-    requireThat(value&&value.version===1,'対応していないセーブ形式です。');
+    requireThat(value&&[1,2].includes(value.version),'対応していないセーブ形式です。');
     const s=structuredClone(value);
+    if(s.version===1){
+      s.curator={level:0,experience:Math.max(0,s.collection.length-4)};s.preferences.speed=1;
+      if(s.session){s.session.elapsed=s.session.elapsed/18*DAY_SECONDS;s.session.paused=false;}
+      if(s.expedition)Object.assign(s.expedition,{progress:0,startedDay:0,startedElapsed:0});
+      s.version=2;
+    }
+    requireThat(s.curator&&finiteInt(s.curator.level,0,3)&&finiteInt(s.curator.experience,0,1000000),'調査担当の情報が不正です。');
     requireThat(typeof s.name==='string'&&s.name.trim().length>0&&s.name.length<=20,'館名が不正です。');
     for(const [field,min,max] of [['day',1,1000000],['coins',0,1e12],['reputation',0,100],['nextDecor',1,1000000],['tutorial',0,5]]) requireThat(finiteInt(s[field],min,max),`${field} が不正です。`);
     requireThat(PRICES.includes(s.ticket),'入館料が不正です。');
-    requireThat(s.facilities&&Object.keys(FACILITIES).every(id=>finiteInt(s.facilities[id],1,3)),'設備情報が不正です。');
+    requireThat(s.facilities&&Object.keys(FACILITIES).every(id=>finiteInt(s.facilities[id],1,FACILITIES[id].costs.length+1)),'設備情報が不正です。');
     requireThat(Array.isArray(s.collection)&&s.collection.length<=ARTIFACTS.length,'収蔵品の情報が不正です。');
     const ids=new Set();
     for(const item of s.collection) {
@@ -224,7 +270,7 @@ export function validateSave(value) {
     }
     requireThat(['clock','globe','musicbox','mask'].every(id=>ids.has(id)),'初期収蔵品が不足しています。');
     requireThat(s.collection.filter(item=>item.status==='repairing').length<=(s.facilities.workshop>=2?2:1),'修復枠を超えています。');
-    requireThat(Array.isArray(s.placements)&&s.placements.length<=42,'配置情報が不正です。');
+    requireThat(Array.isArray(s.placements)&&s.placements.length<=56,'配置情報が不正です。');
     const positions=new Set(), placedIds=new Set();
     const {width,height}=dimensions(s), door=entrance(s);
     for(const p of s.placements) {
@@ -238,16 +284,20 @@ export function validateSave(value) {
     requireThat(s.placements.every(p=>neighbors(p).some(n=>reachable.has(key(n.x,n.y)))),'通路が塞がれています。');
     if(s.expedition) {
       const route=ROUTES.find(r=>r.id===s.expedition.route);
-      requireThat(route&&!ids.has(s.expedition.item)&&route.items.includes(s.expedition.item)&&s.expedition.total===route.days&&finiteInt(s.expedition.remaining,1,route.days),'調査情報が不正です。');
+      const job=s.expedition;
+      requireThat(route&&!ids.has(job.item)&&route.items.includes(job.item)&&finiteInt(job.total,1,route.days)&&finiteInt(job.remaining,1,job.total)&&Number.isFinite(job.progress)&&job.progress>=0&&job.progress<1&&finiteInt(job.startedDay,0,s.day)&&Number.isFinite(job.startedElapsed)&&job.startedElapsed>=0&&job.startedElapsed<DAY_SECONDS,'調査情報が不正です。');
     }
     requireThat(s.stats&&['visitors','earnings','repairs','upgrades'].every(k=>finiteInt(s.stats[k],0,1e12))&&typeof s.stats.placed==='boolean','実績が不正です。');
     requireThat(typeof s.tutorialDismissed==='boolean'&&s.preferences&&typeof s.preferences.motion==='boolean'&&typeof s.preferences.sound==='boolean','設定が不正です。');
+    requireThat([1,2,4].includes(s.preferences.speed),'速度が不正です。');
     requireThat(Array.isArray(s.history)&&s.history.length<=30,'履歴が不正です。');
     for(const report of s.history) {
       requireThat(['visitors','income','upkeep','satisfaction','day','shortfall'].every(k=>finiteInt(report[k],0,1e12))&&Number.isFinite(report.net)&&typeof report.audience==='string'&&report.audience.length<40&&Array.isArray(report.completed)&&report.completed.every(v=>typeof v==='string'&&v.length<100),'営業記録が不正です。');
+      requireThat(report.feedback===undefined||Array.isArray(report.feedback)&&report.feedback.length<=5&&report.feedback.every(f=>typeof f.text==='string'&&f.text.length<80&&typeof f.detail==='string'&&f.detail.length<150),'感想の情報が不正です。');
     }
     if(s.session) {
       requireThat(Number.isFinite(s.session.elapsed)&&s.session.elapsed>=0&&s.session.elapsed<DAY_SECONDS,'営業時間が不正です。');
+      requireThat(typeof s.session.paused==='boolean','一時停止の情報が不正です。');
       // Derive financial results from validated game data, never trust imported revenue.
       s.session.report=forecast(s); requireThat(s.session.report.visitors>0,'営業できる展示がありません。');
     }

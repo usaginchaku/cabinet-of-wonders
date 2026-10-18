@@ -1,5 +1,5 @@
 import { BY_ID, DECOR } from './data.js';
-import { dimensions, entrance, placementError } from './engine.js';
+import { dimensions, entrance, placementError, accessibleTiles } from './engine.js';
 import { esc } from './ui-utils.js';
 
 const palette={cream:'#f6e8c6',gold:'#b98c47',ink:'#304a43',wood:'#946a48',teal:'#538b85'};
@@ -83,7 +83,19 @@ function walls(s) {
   return out;
 }
 
-export function renderBoard(s,{selected=null,placing=null,compact=typeof matchMedia==='function'&&matchMedia('(max-width: 700px)').matches}={}) {
+export function pathOverlay(s,placements=s.placements) {
+  return [...accessibleTiles(s,placements)].map(key=>{const [x,y]=key.split(',').map(Number),p=iso(x+.5,y+.5);return `<circle cx="${p.x}" cy="${p.y}" r="5" fill="#356c61" opacity=".65"/>`;}).join('');
+}
+export function placementGhost(s,placing,tile) {
+  if(!placing||!tile)return '';
+  const id=placing.id??'_new',error=placementError(s,id,tile.x,tile.y),p=iso(tile.x+.5,tile.y+.5);
+  const kind=placing.kind??s.placements.find(p=>p.id===id)?.kind;
+  const next=[...s.placements.filter(p=>p.id!==id),{id,...tile,...(kind?{kind}:{})}];
+  const color=error?'#a44038':'#286e50';
+  return `${error?'':pathOverlay(s,next)}<g transform="translate(${p.x} ${p.y+6})" opacity=".65">${objectArt(kind??BY_ID[id].art,{level:s.collection.find(i=>i.id===id)?.level})}</g><path d="M${p.x} ${p.y-27}l53 27-53 27-53-27Z" fill="none" stroke="${color}" stroke-width="4" stroke-dasharray="7 3"/>`;
+}
+
+export function renderBoard(s,{selected=null,placing=null,paths=false,preview=null}={}) {
   const g=boardGeometry(s),door=entrance(s),w=g.width,h=g.height;
   const a=iso(0,0),b=iso(w,0),c=iso(w,h),d=iso(0,h);
   let floor='';
@@ -94,18 +106,17 @@ export function renderBoard(s,{selected=null,placing=null,compact=typeof matchMe
     const available=placing&&!error;
     const label=occupied?BY_ID[occupied.id]?.name??DECOR[occupied.kind]?.name:isDoor?'入口':`空き区画 ${x+1}-${y+1}`;
     const shape=`M${p.x} ${p.y}l53 27-53 27-53-27Z`;
-    floor+=`<g class="tile ${available?'available':''} ${occupied?.id===selected?'is-selected':''} ${placing&&error?'blocked':''}" role="button" tabindex="0" aria-label="${esc(label)}" data-tile-x="${x}" data-tile-y="${y}" data-tile-id="${occupied?.id??''}"><path class="floor-tile" d="${shape}" fill="${(x+y)%2?'#c8ac82':'#d1b58b'}" stroke="#b89d77" stroke-width=".7"/>${path(`M${p.x-27} ${p.y+14}l53 27M${p.x-1} ${p.y+1}l-25 39`,'none','#a98b631e')}<path class="tile-highlight" d="${shape}"/>${available?`<g transform="translate(${p.x} ${p.y+27})"><path d="M-7 0H7M0-7V7" stroke="#417e69" stroke-width="2.5"/></g>`:''}<title>${esc(label)}</title></g>`;
+    floor+=`<g class="tile ${occupied?'selectable':''} ${available?'available':''} ${occupied?.id===selected?'is-selected':''} ${placing&&error?'blocked':''}" role="button" tabindex="${placing||occupied?0:-1}" aria-label="${esc(label)}" data-tile-x="${x}" data-tile-y="${y}" data-tile-id="${occupied?.id??''}"><path class="floor-tile" d="${shape}" fill="${(x+y)%2?'#c8ac82':'#d1b58b'}" stroke="#b89d77" stroke-width=".7"/>${path(`M${p.x-27} ${p.y+14}l53 27M${p.x-1} ${p.y+1}l-25 39`,'none','#a98b631e')}<path class="tile-highlight" d="${shape}"/>${available?`<g transform="translate(${p.x} ${p.y+27})"><path d="M-7 0H7M0-7V7" stroke="#417e69" stroke-width="2.5"/></g>`:''}<title>${esc(label)}</title></g>`;
   }
   const ordered=[...s.placements].sort((a,b)=>(a.x+a.y)-(b.x+b.y)||a.x-b.x);
   let objects=ordered.map(p=>{
     const pos=iso(p.x+.5,p.y+.5),item=s.collection.find(i=>i.id===p.id);
     const isSelected=selected===p.id;
     const name=BY_ID[p.id]?.name??DECOR[p.kind].name;
-    return `<g class="placed-object ${isSelected?'selected-object':''}" data-object="${p.id}" data-action="select" data-id="${p.id}" data-depth="${p.x+p.y+1}" transform="translate(${pos.x} ${pos.y+6})" pointer-events="${placing?'none':'visiblePainted'}" role="button" tabindex="${placing?-1:0}" aria-label="${esc(name)}を選択"><rect x="-35" y="${p.kind==='bench'?-52:p.kind==='plant'?-82:-103}" width="70" height="${p.kind==='bench'?66:p.kind==='plant'?96:117}" fill="transparent"/>${isSelected?ellipse(0,1,39,19,'#e8c67770','stroke="#e9d7a4" stroke-width="2"'):''}${objectArt(p.kind??BY_ID[p.id].art,{level:item?.level})}${item?.level>1?`<g transform="translate(23 -68)"><circle r="9" fill="#315e4e"/><text text-anchor="middle" dominant-baseline="central" fill="#fff2ce" font-size="10">${item.level}</text></g>`:''}</g>`;
+    return `<g class="placed-object ${placing?.id===p.id?'moving-origin':''} ${isSelected?'selected-object':''}" data-object="${p.id}" data-action="select" data-id="${p.id}" data-depth="${p.x+p.y+1}" transform="translate(${pos.x} ${pos.y+6})" pointer-events="${placing?'none':'visiblePainted'}" role="button" tabindex="${placing?-1:0}" aria-label="${esc(name)}を選択"><rect x="-35" y="${p.kind==='bench'?-52:p.kind==='plant'?-82:-103}" width="70" height="${p.kind==='bench'?66:p.kind==='plant'?96:117}" fill="transparent"/>${isSelected?ellipse(0,1,39,19,'#e8c67770','stroke="#e9d7a4" stroke-width="2"'):''}${objectArt(p.kind??BY_ID[p.id].art,{level:item?.level})}${item?.level>1?`<g transform="translate(23 -68)"><circle r="9" fill="#315e4e"/><text text-anchor="middle" dominant-baseline="central" fill="#fff2ce" font-size="10">${item.level}</text></g>`:''}</g>`;
   }).join('');
   const entry=iso(door.x+.5,h);
-  const cropWidth=(w+h)*53+90;
-  const viewBox=compact?`${450-cropWidth/2} 60 ${cropWidth} ${g.viewHeight-140}`:`0 0 ${g.viewWidth} ${g.viewHeight}`;
+  const viewBox=`${g.originX-h*53-55} ${g.originY-112} ${(w+h)*53+110} ${(w+h)*27+160}`;
   return `<svg id="museum-board" viewBox="${viewBox}" aria-label="収集館の見取り図。展示や空き区画を選べます。" role="group">
     <defs><filter id="room-shadow" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="14"/></filter></defs>
     <ellipse cx="450" cy="${g.originY+(w+h)*15}" rx="${(w+h)*28}" ry="${(w+h)*14}" fill="#56745e0b"/>
@@ -114,9 +125,11 @@ export function renderBoard(s,{selected=null,placing=null,compact=typeof matchMe
       <ellipse cx="${c.x/2}" cy="${c.y/2+35}" rx="${(w+h)*28}" ry="${(w+h)*13}" fill="#534d3b24" filter="url(#room-shadow)"/>
       ${path(`M${d.x} ${d.y}L${c.x} ${c.y} ${b.x} ${b.y}v19L${c.x} ${c.y+19} ${d.x} ${d.y+19}Z`,'#ad9872','#9a8560')}
       ${floor}${walls(s)}
+      <g pointer-events="none">${paths?pathOverlay(s):''}</g>
       ${path(`M${entry.x-25} ${entry.y-10}l51 26-28 14-51-26Z`,'#e6d9b7','#b7a27b')}
       ${path(`M${entry.x-52} ${entry.y+15}l52 26 24-12v8l-24 13-52-26Z`,'#cab992')}
       <g id="visitor-layer">${objects}</g>
+      <g id="placement-preview" pointer-events="none">${placementGhost(s,placing,preview)}</g>
       <g transform="translate(${entry.x-80} ${entry.y-8})" pointer-events="none">${path('M0 0V-29M16 8V-21','none','#806f4e','stroke-width="3"')}${path('M-2-31L20-20V-5L-2-16Z','#2f5c4b','#c6aa67')}${path('M3-22L14-17','none','#dfcc96')}</g>
     </g>
   </svg>`;

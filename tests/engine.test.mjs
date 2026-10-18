@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { initialState, command, forecast, placementError, validateSave, dimensions, routeNext, owned } from '../src/engine.js';
+import { initialState, command, forecast, placementError, validateSave, dimensions, routeNext, owned, collections, visitorFeedback } from '../src/engine.js';
 import { ROUTES, ARTIFACTS, DAY_SECONDS } from '../src/data.js';
-import { loadGame,saveGame,parseImport } from '../src/storage.js';
+import { loadGame,saveGame,parseImport,migrationBackup } from '../src/storage.js';
 
 const act=(s,type,args)=>command(s,type,args).state;
 const day=s=>act(act(s,'open'),'finish');
@@ -91,4 +91,76 @@ test('storage read errors preserve data and zero-cash recovery advances repairs'
  let s=initialState();saveGame(s,storage);s=day(s);saveGame(s,storage);assert.equal(loadGame(storage).state.day,2);assert.equal(values.size,2);
  const bad={getItem:()=>'{bad',setItem:()=>assert.fail('must not overwrite')};assert(loadGame(bad).error);
  s=initialState();s.coins=0;s=act(s,'work');assert.equal(s.coins,100);assert.equal(s.day,2);assert.equal(validateSave(s).ok,true);
+});
+
+test('v1 saves migrate in-flight days and expeditions without mutating the original',()=>{
+ let old=act(initialState(),'expedition',{id:'port'});old=act(old,'open');
+ old.version=1;delete old.curator;delete old.preferences.speed;delete old.session.paused;
+ old.session.elapsed=9;for(const field of ['progress','startedDay','startedElapsed'])delete old.expedition[field];
+ const snapshot=structuredClone(old),loaded=validateSave(old);assert(loaded.ok);assert.deepEqual(old,snapshot);
+ const s=loaded.state;assert.equal(s.version,2);assert.equal(s.session.elapsed,30);assert.equal(s.coins,old.coins);
+ const values=new Map([['curio-museum.save.v1',JSON.stringify(old)]]),storage={getItem:k=>values.get(k)??null,setItem:(k,v)=>values.set(k,v)};
+ saveGame(s,storage);saveGame(act(s,'finish'),storage);assert.equal(migrationBackup(storage),JSON.stringify(old));
+ const failStorage={getItem:storage.getItem,setItem:()=>{throw new Error('QuotaExceededError');}};
+ assert.throws(()=>saveGame(s,failStorage),/QuotaExceeded/);
+ assert.deepEqual(s.collection,old.collection);assert.deepEqual(s.placements,old.placements);
+ assert.equal(s.expedition.remaining,2);assert.equal(s.preferences.speed,1);assert.equal(s.curator.level,0);
+ const next=act(s,'finish');assert.equal(next.expedition.remaining,1);assert(validateSave(next).ok);
+ old.session.elapsed=19;assert.equal(validateSave(old).ok,false);
+});
+
+test('a curator permits live research, charges wages, and counts only remaining time',()=>{
+ let s=initialState();s.coins=10000;
+ assert.throws(()=>command(act(s,'open'),'expedition',{id:'market'}),/調査担当/);
+ const original=forecast(s);s=act(s,'curator');assert.equal(forecast(s).upkeep,original.upkeep+60);assert.equal(forecast(s).capacity,original.capacity+4);
+ s=act(s,'open');s.session.elapsed=30;s=act(s,'expedition',{id:'market'});
+ const saved=validateSave(s);assert(saved.ok);s=act(saved.state,'finish');
+ assert.equal(s.expedition.remaining,1);assert.equal(s.expedition.progress,.5);assert.equal(s.curator.experience,0);
+ s=day(s);assert.equal(s.expedition,null);assert.equal(s.curator.experience,1);assert.equal(owned(s,'train').status,'damaged');
+ assert.throws(()=>command(s,'curator'),/2回/);
+ s=act(s,'expedition',{id:'market'});s=day(s);s=act(s,'curator');assert.equal(s.curator.level,2);
+ s=act(s,'expedition',{id:'port'});assert.equal(s.expedition.total,1);s=day(s);
+ s=act(s,'expedition',{id:'estate'});s=day(s);s=act(s,'expedition',{id:'estate'});s=day(s);
+ const previousAppeal=forecast(s).appeal;s=act(s,'curator');assert.equal(s.curator.level,3);
+ assert(forecast(s).appeal>previousAppeal);assert.equal(forecast(s).wages,140);assert(validateSave(s).ok);
+ assert.throws(()=>command(s,'curator'),/最大/);
+});
+
+test('late research never gains a full day immediately, and roundoff remains saveable',()=>{
+ let s=initialState();s.coins=10000;s=act(s,'curator');s=act(s,'open');s.session.elapsed=59.99;
+ s=act(s,'expedition',{id:'market'});s=act(s,'finish');assert(s.expedition.progress<.001);assert(!owned(s,'train'));
+ assert(validateSave(s).ok);
+ s=act(s,'open');s.expedition.remaining=2;s.expedition.total=2;s.expedition.route='port';s.expedition.item='tarot';
+ s.expedition.progress=.9999999999;s=act(s,'finish');assert.equal(s.expedition,null);
+});
+
+test('pause and speed are persisted and invalid controls are transactional',()=>{
+ let s=act(initialState(),'open');s=act(s,'pause');s=act(s,'tick',{seconds:2});assert.equal(s.session.elapsed,0);
+ s=act(s,'preferences',{speed:4});assert.equal(validateSave(s).state.preferences.speed,4);
+ s=act(s,'pause');s=act(s,'tick',{seconds:2});assert.equal(s.session.elapsed,2);
+ assert.throws(()=>command(s,'preferences',{speed:100}),/速度/);assert.equal(s.preferences.speed,4);
+ const invalid=structuredClone(s);invalid.session.paused='yes';assert.equal(validateSave(invalid).ok,false);
+ invalid.session.paused=false;invalid.curator.level=4;assert.equal(validateSave(invalid).ok,false);
+});
+
+test('research completed before hiring counts toward training, including completed v1 collections',()=>{
+ let s=initialState();s=act(s,'expedition',{id:'market'});s=day(s);assert.equal(s.curator.experience,1);
+ s.coins=10000;s=act(s,'curator');assert.equal(s.curator.experience,1);
+ const old=initialState();old.version=1;delete old.curator;delete old.preferences.speed;
+ for(const def of ARTIFACTS)if(!owned(old,def.id))old.collection.push({id:def.id,status:'ready',level:1,branch:null});
+ const loaded=validateSave(old);assert(loaded.ok);s=loaded.state;assert.equal(s.curator.experience,11);s.coins=10000;
+ for(let i=0;i<3;i++)s=act(s,'curator');assert.equal(s.curator.level,3);assert(validateSave(s).ok);
+});
+
+test('theme sets reward displayed upgraded collections and maximum expansion stays valid',()=>{
+ let s=initialState();s.coins=10000;s.collection.push({id:'train',status:'ready',level:1,branch:null});
+ for(const id of ['room','room','room'])s=act(s,'facility',{id});assert.deepEqual(dimensions(s),{width:8,height:7});
+ assert.throws(()=>command(s,'facility',{id:'room'}),/最大/);
+ s=act(s,'place',{id:'musicbox',x:2,y:1});s=act(s,'place',{id:'train',x:2,y:2});
+ for(const id of ['clock','musicbox','train'])s=act(s,'upgrade',{id,branch:'access'});
+ assert.equal(collections(s).find(g=>g.theme==='mechanism').complete,true);assert.equal(forecast(s).sets,1);
+ assert(visitorFeedback(s).some(f=>f.text.includes('特集')));assert(validateSave(s).ok);
+ s=act(s,'store',{id:'train'});assert.equal(forecast(s).sets,0);
+ s=act(s,'ticket',{value:45});assert(visitorFeedback(s).some(f=>f.text.includes('高い')));
+ s=day(s);assert(s.history[0].feedback.length);assert(validateSave(s).ok);
 });

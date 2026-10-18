@@ -30,7 +30,7 @@ export const ROUTES = [
 export const FACILITIES = {
   workshop: { name: '修復工房', icon: 'hammer', costs: [600, 1200], benefits: ['修復枠 1 → 2', '修復日数 −1日（最短1日）'] },
   lighting: { name: '展示照明', icon: 'lamp', costs: [420, 950], benefits: ['全展示の魅力 +12%', '全展示の魅力 +24%'] },
-  room: { name: '展示室を増築', icon: 'expand', costs: [950, 1850], benefits: ['20区画 → 30区画', '30区画 → 42区画'] },
+  room: { name: '展示室を増築', icon: 'expand', costs: [950, 1850, 3200], benefits: ['20区画 → 30区画', '30区画 → 42区画', '42区画 → 56区画'] },
 };
 export const DECOR = {
   plant: { name: '観葉植物', cost: 110, description: '館内の心地よさ +1', art: 'plant' },
@@ -45,5 +45,6 @@ export const AUDIENCES = [
   { name: '収集家', theme: 'bizarre', price: [1.1, 1, .9] },
 ];
 export const PRICES = [20, 30, 45];
-export const DAY_SECONDS = 18;
+export const DAY_SECONDS = 60;
+export const CURATOR = { costs: [900, 650, 1400], wages: [0, 60, 90, 140], experience: [0, 2, 5], benefits: ['開館中の調査・受入 +4人', '調査日数 −1日（最短1日）', '全展示の魅力 +15%'] };
 export const SAVE_KEY = 'curio-museum.save.v1';

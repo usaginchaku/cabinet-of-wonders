@@ -1,6 +1,11 @@
 import { SAVE_KEY } from './data.js';
 import { initialState, validateSave } from './engine.js';
 
+const MIGRATION_BACKUP_KEY=`${SAVE_KEY}.before-v2`;
+export function migrationBackup(storage=localStorage) {
+  try {return storage.getItem(MIGRATION_BACKUP_KEY);}catch{return null;}
+}
+
 export function loadGame(storage=localStorage) {
   try {
     const raw=storage.getItem(SAVE_KEY);
@@ -15,7 +20,12 @@ export function loadGame(storage=localStorage) {
 export function saveGame(state,storage=localStorage) {
   const previous=storage.getItem(SAVE_KEY);
   if(previous) {
-    try { if(validateSave(JSON.parse(previous)).ok)storage.setItem(`${SAVE_KEY}.backup`,previous); } catch { /* Preserve unreadable data under the primary key until explicit recovery. */ }
+    let parsed;try{parsed=JSON.parse(previous);}catch{ /* Recovery preserves the unreadable source until explicitly replaced. */ }
+    if(parsed&&validateSave(parsed).ok){
+      // Keep the pre-upgrade original even after the rolling backup is replaced.
+      if(parsed.version===1&&state.version===2&&!storage.getItem(MIGRATION_BACKUP_KEY))storage.setItem(MIGRATION_BACKUP_KEY,previous);
+      storage.setItem(`${SAVE_KEY}.backup`,previous);
+    }
   }
   storage.setItem(SAVE_KEY,JSON.stringify(state));
 }

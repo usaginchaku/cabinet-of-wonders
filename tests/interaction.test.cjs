@@ -11,7 +11,7 @@ async function check(name,fn){await fn();results.push(name);console.log(`PASS ${
   const context=await browser.newContext({viewport:{width:390,height:844},isMobile:true,hasTouch:true});
   const page=await context.newPage();await page.goto('http://127.0.0.1:4173');
   await check('mobile: museum tab exposes pricing and all visible controls have 44px targets',async()=>{
-   await page.locator('[data-action="tab"][data-id="museum"]').tap();
+   await action(page,'museum-panel').tap();
    await page.getByText('来館希望',{exact:false}).waitFor();
    const tooSmall=await page.locator('button:not(.sheet-shade)').evaluateAll(buttons=>buttons.filter(b=>{
     const r=b.getBoundingClientRect();return r.width>0&&r.height>0&&(r.width<43.9||r.height<43.9);
@@ -23,8 +23,10 @@ async function check(name,fn){await fn();results.push(name);console.log(`PASS ${
    const object=page.locator('[data-object="clock"]');await object.focus();await page.keyboard.press('Enter');
    await page.getByRole('heading',{name:'月読みの置時計'}).waitFor();
    await action(page,'move').tap();const tile=page.locator('[data-tile-x="0"][data-tile-y="0"]');await tile.focus();await page.keyboard.press('Enter');
-   assert.deepEqual(await page.evaluate(()=>({...document.activeElement.dataset})),{tileX:'0',tileY:'0',tileId:'clock'});
-   await page.locator('[data-action="tab"][data-id="museum"]').tap();
+   assert.equal(await page.evaluate(()=>document.activeElement.dataset.action),'confirm-place');
+   assert(!(await stored(page)).placements.some(p=>p.id==='clock'&&p.x===0&&p.y===0));
+   await action(page,'confirm-place').tap();assert((await stored(page)).placements.some(p=>p.id==='clock'&&p.x===0&&p.y===0));
+   await action(page,'museum-panel').tap();
    const ticket=page.locator('[data-action="ticket"][data-value="45"]');await ticket.focus();await page.keyboard.press('Enter');
    assert.equal(await page.evaluate(()=>document.activeElement.dataset.value),'45');
    await action(page,'close-panel').last().tap();
@@ -33,7 +35,7 @@ async function check(name,fn){await fn();results.push(name);console.log(`PASS ${
    const before=await stored(page);
    await page.locator('.open-button').dblclick();assert((await stored(page)).session,'Second click must not fast-forward');
    await page.waitForTimeout(3000);const during=await stored(page);assert(during.session.elapsed>1);
-   await page.reload();await action(page,'finish').waitFor();assert((await stored(page)).session.elapsed>=during.session.elapsed);
+   await page.reload();await action(page,'finish').waitFor();await action(page,'speed').click();await action(page,'speed').click();assert((await stored(page)).session.elapsed>=during.session.elapsed);
    await page.getByRole('heading',{name:'1日目の営業記録'}).waitFor({timeout:23000});
    const after=await stored(page);assert.equal(after.day,2);assert.equal(after.coins,before.coins+during.session.report.net);assert.equal(after.history.length,1);
    await page.waitForTimeout(600);assert.equal((await stored(page)).history.length,1);
@@ -43,7 +45,7 @@ async function check(name,fn){await fn();results.push(name);console.log(`PASS ${
    await action(page,'help').click();await page.locator('[data-modal-action="info-tab"][data-id="settings"]').click();
    await page.locator('[data-modal-action="reset-confirm"]').click();
    const second=await context.newPage();await second.goto('http://127.0.0.1:4173');
-   await second.locator('[data-action="tab"][data-id="museum"]').click();
+   await action(second,'museum-panel').click();
    await second.locator('[data-action="ticket"][data-value="20"]').click();const latest=await stored(second);
    await page.locator('[data-modal-action="confirm"]').click();
    await page.getByRole('heading',{name:'別のタブの進行を確認'}).waitFor();assert.deepEqual(await stored(second),latest);await second.close();
